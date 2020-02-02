@@ -11,7 +11,7 @@ As an example, here's a heart (7x7 pixels) and its palette (4 colours, 4x1 pixel
 
 ![a pixelart heart](https://raw.githubusercontent.com/minteyay/img_to_array/master/doc/example_heart_big.png "a pixelart heart")
 
-![a palette of black and shades of red](https://raw.githubusercontent.com/minteyay/img_to_array/master/doc/example_heart_big_palette.png "a palette of black and shades of red")
+![a palette of black and shades of red](https://raw.githubusercontent.com/minteyay/img_to_array/master/doc/example_heart_palette_big.png "a palette of black and shades of red")
 
 Passing these files to the converter produces the following file:
 ```C
