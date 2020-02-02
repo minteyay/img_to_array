@@ -52,5 +52,9 @@ fn main() {
 
     // Do the actual conversion
     let config = Config { palette_path, image_path, output_path };
-    img_to_array::convert(config);
+    if let Err(e) = img_to_array::convert(&config) {
+        println!("{}", e);
+        process::exit(1);
+    };
+    println!("Arrays written successfully to file \"{}\"", config.output_path);
 }

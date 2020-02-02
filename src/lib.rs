@@ -29,14 +29,20 @@ impl From<&image::Bgra<u8>> for Rgb565 {
     }
 }
 
-pub fn convert(config: Config) {
+pub fn convert(config: &Config) -> Result<(), String> {
     let mut output = String::from("#include <stdint.h>\n");
 
     // Read in and store the palette
-    // TODO: error handling (mostly incorrect path)
-    let palette_img = image::open(config.palette_path).unwrap().to_bgra();
+    let palette_img = match image::open(&config.palette_path) {
+        Ok(img) => img,
+        Err(e) => return Err(format!("Error opening palette file \"{}\": {}",
+            &config.palette_path, e.to_string())),
+    };
+    let palette_img = palette_img.to_bgra();
+
     let mut palette: HashMap<Rgb565, usize> = HashMap::new();
 
+    // Add the colours from the palette to the hashmap
     for pixel in palette_img.enumerate_pixels() {
         let colour = Rgb565::from(pixel.2);
         if ! palette.contains_key(&colour) {
@@ -49,6 +55,7 @@ pub fn convert(config: Config) {
         palette.len()).as_str());
     let mut line = String::from("    ");
     for colour in &palette {
+        // Check if we need to push the current value to the next line
         if line.len() + 7 > 80 {
             output.push_str(format!("{}\n", line).as_str());
             line = String::from("    ");
@@ -61,20 +68,34 @@ pub fn convert(config: Config) {
     output.push_str("\n};\n\n");
 
     // Read in the image to convert and add its pixels to the output
-    // TODO: error handling (mostly incorrect path)
-    let img = image::open(config.image_path).unwrap().to_bgra();
+    let img = match image::open(&config.image_path) {
+        Ok(img) => img,
+        Err(e) => return Err(format!("Error opening image file \"{}\": {}",
+            &config.image_path, e.to_string())),
+    };
+    let img = img.to_bgra();
+
+    // Add the image data array definition to the output
     output.push_str(format!("const uint8_t image_data[{}] PROGMEM = {{\n",
         img.dimensions().0 * img.dimensions().1).as_str());
     let mut line = String::from("    ");
     for pixel in img.enumerate_pixels() {
+        // Convert the 32 bit RGBA pixel value to RGB565
         let colour = Rgb565::from(pixel.2);
+
+        // Check if we need to push the current value to the next line
         if line.len() + 4 > 80 {
             output.push_str(format!("{}\n", line).as_str());
             line = String::from("    ");
         }
-        // TODO: error handling and reporting
-        // (image may have colours not present in the palette)
-        line.push_str(format!("{:3},", palette.get(&colour).unwrap()).as_str());
+
+        // Check that the colour is defined in the palette
+        let palette_index = match palette.get(&colour) {
+            Some(v) => v,
+            None => return Err(format!("Error creating colour index array: \
+                colour {:#06X} isn't present in the palette", colour.0)),
+        };
+        line.push_str(format!("{:3},", palette_index).as_str());
     }
     if !line.trim().is_empty() {
         output.push_str(format!("{}\n", line).as_str());
@@ -82,7 +103,9 @@ pub fn convert(config: Config) {
     output.push_str("};\n");
 
     // Write output to file
-    // TODO: error handling
-    fs::write(config.output_path, output)
-        .expect("Couldn't open file for writing");
+    if let Err(e) = fs::write(&config.output_path, output) {
+        return Err(format!("Error writing output file: {}", e.to_string()))
+    }
+
+    Ok(())
 }
