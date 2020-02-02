@@ -8,28 +8,6 @@ pub struct Config {
     pub output_path: String,
 }
 
-impl Config {
-    pub fn new(mut args: std::env::Args) -> Result<Config, &'static str> {
-        // TODO: proper getopts parsing with error handling
-        args.next();
-
-        let image_path = match args.next() {
-            Some(arg) => arg,
-            None => return Err("No image file path given"),
-        };
-        let palette_path = match args.next() {
-            Some(arg) => arg,
-            None => return Err("No palette file path given"),
-        };
-        let output_path = match args.next() {
-            Some(arg) => arg,
-            None => return Err("No output file path given"),
-        };
-
-        Ok(Config { image_path, palette_path, output_path })
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct Rgb565(u16);
 
