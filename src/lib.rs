@@ -1,5 +1,4 @@
 use std::fs;
-use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Config {
@@ -40,14 +39,12 @@ pub fn convert(config: &Config) -> Result<(), String> {
     };
     let palette_img = palette_img.to_bgra();
 
-    let mut palette: HashMap<Rgb565, usize> = HashMap::new();
+    let mut palette: Vec<Rgb565> = Vec::new();
 
-    // Add the colours from the palette to the hashmap
+    // Add the colours from the palette to the vector
     for pixel in palette_img.enumerate_pixels() {
         let colour = Rgb565::from(pixel.2);
-        if ! palette.contains_key(&colour) {
-            palette.insert(colour, palette.len());
-        }
+        palette.push(colour);
     }
 
     // Add the palette to the output
@@ -60,7 +57,7 @@ pub fn convert(config: &Config) -> Result<(), String> {
             output.push_str(format!("{}\n", line).as_str());
             line = String::from("    ");
         }
-        line.push_str(format!("{:#06X}, ", (colour.0).0).as_str());
+        line.push_str(format!("{:#06X}, ", colour.0).as_str());
     }
     if !line.trim().is_empty() {
         output.push_str(line.as_str());
@@ -90,7 +87,7 @@ pub fn convert(config: &Config) -> Result<(), String> {
         }
 
         // Check that the colour is defined in the palette
-        let palette_index = match palette.get(&colour) {
+        let palette_index = match palette.iter().position( |c| c == &colour) {
             Some(v) => v,
             None => return Err(format!("Error creating colour index array: \
                 colour {:#06X} isn't present in the palette", colour.0)),
