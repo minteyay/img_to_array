@@ -1,0 +1,6 @@
+/target
+**/*.rs.bk
+
+# A lot of the test outputs are to .c files
+# and the project itself doesn't use them
+*.c
