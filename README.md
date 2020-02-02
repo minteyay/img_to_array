@@ -1,3 +1,5 @@
+# img_to_array
+
 Converts a palette file and an image file into C arrays to use with Arduino or other embedded systems where defining image data in flash memory instead of reading it from external files is useful. Storing image data as indices referring to a palette saves RAM in situations where you might want to keep a buffer of an external display.
 
 Usable palette files are images (for example, exported as .png in Aseprite) with all the colours used in the image. The palette file can be a single line or multidimensional. If the same colour is present multiple times in the palette, the first instance of it is used.
