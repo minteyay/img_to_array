@@ -9,9 +9,9 @@ Please note: Currently this only converts 32-bit RGBA images (should work with 2
 ## Example
 As an example, here's a heart (7x7 pixels) and its palette (4 colours, 4x1 pixels, black is used as a transparency), scaled up to 800% here for clarity.
 
-![a pixelart heart](https://github.com/minteyay/img_to_array/doc/example_heart_big.png "a pixelart heart")
+![a pixelart heart](https://raw.githubusercontent.com/minteyay/img_to_array/master/doc/example_heart_big.png "a pixelart heart")
 
-![a palette of black and shades of red](https://github.com/minteyay/img_to_array/doc/example_heart_big_palette.png "a palette of black and shades of red")
+![a palette of black and shades of red](https://raw.githubusercontent.com/minteyay/img_to_array/master/doc/example_heart_big_palette.png "a palette of black and shades of red")
 
 Passing these files to the converter produces the following file:
 ```C
