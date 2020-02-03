@@ -6,7 +6,7 @@ use getopts::Options;
 #[derive(Debug)]
 pub struct Config {
     pub image_path: String,
-    pub palette_path: String,
+    pub palette_path: Option<String>,
     pub output_path: String,
     pub colour_format: ColourFormat,
     pub palette_size: u8,
@@ -43,7 +43,7 @@ impl From<&image::Bgra<u8>> for Rgb {
 }
 
 fn print_usage(program: &str, opts: Options) {
-    let brief = format!("Usage: {} PALETTE_PATH IMAGE_PATH [options]", program);
+    let brief = format!("Usage: {} IMAGE_PATH [options]", program);
     print!("{}", opts.usage(&brief));
 }
 
@@ -55,10 +55,11 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
     let mut opts = Options::new();
     opts.optopt("c", "colour", "set colour format ([RGB]565, RGB[888])",
         "FORMAT");
+    opts.optopt("p", "palette", "set palette file", "FILE");
     opts.optopt("", "palsize", "set palette size in bits (8, 16, 32)",
         "SIZE");
     opts.optopt("o", "output", "set output file name (output.c by default)",
-        "NAME");
+        "FILE");
     opts.optflag("h", "help", "print this help message");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -76,8 +77,8 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
     }
 
     // Check that the correct number of inputs were given
-    if matches.free.len() != 2 {
-        eprintln!("No palette and image files specified");
+    if matches.free.len() != 1 {
+        eprintln!("No image file specified");
         print_usage(&program, opts);
         return Err(())
     }
@@ -117,8 +118,8 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
         None => 8,
     };
 
-    let palette_path = matches.free[0].clone();
-    let image_path = matches.free[1].clone();
+    let palette_path = matches.opt_str("p");
+    let image_path = matches.free[0].clone();
 
     Ok(Config {
         palette_path,
@@ -132,19 +133,55 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
 pub fn convert(config: &Config) -> Result<(), String> {
     let mut output = String::from("#include <stdint.h>\n");
 
-    // Read in and store the palette
-    let palette_img = match image::open(&config.palette_path) {
+    // Read in the image to convert
+    let img = match image::open(&config.image_path) {
         Ok(img) => img,
-        Err(e) => return Err(format!("Error opening palette file \"{}\": {}",
-            &config.palette_path, e.to_string())),
+        Err(e) => return Err(format!("Error opening image file \"{}\": {}",
+            &config.image_path, e.to_string())),
     };
-    let palette_img = palette_img.to_bgra();
+    let img = img.to_bgra();
 
+    // Construct the palette
     let mut palette: Vec<Rgb> = Vec::new();
+    match &config.palette_path {
+        Some(path) => {
+            // Read in and store the palette if one was given
+            let palette_img = match image::open(&path) {
+                Ok(img) => img,
+                Err(e) => return Err(format!("Error opening palette file \
+                    \"{}\": {}", &path, e.to_string())),
+            };
+            let palette_img = palette_img.to_bgra();
 
-    // Add the colours from the palette to the vector
-    for pixel in palette_img.enumerate_pixels() {
-        palette.push(Rgb::from(pixel.2));
+            // Add the colours from the palette to the vector
+            for pixel in palette_img.enumerate_pixels() {
+                palette.push(Rgb::from(pixel.2));
+            }
+        },
+        None => {
+            // Make a palette from the image if one wasn't given
+            for pixel in img.enumerate_pixels() {
+                let colour = Rgb::from(pixel.2);
+
+                // Add the pixel's colour to the palette if it's not there yet
+                match palette.iter().position( |c| c == &colour ) {
+                    Some(_) => (),
+                    None => {
+                        if palette.len() > match config.palette_size {
+                            8 => 256,
+                            16 => 65536,
+                            32 => 4294967296,
+                            _ => 0,
+                        } {
+                            return Err(format!("Image file has too many \
+                                colours for palette size of {}",
+                                config.palette_size))
+                        }
+                        palette.push(colour);
+                    }
+                }
+            }
+        },
     }
 
     // Add the palette to the output
@@ -174,14 +211,6 @@ pub fn convert(config: &Config) -> Result<(), String> {
         output.push_str(line.as_str());
     }
     output.push_str("\n};\n");
-
-    // Read in the image to convert and add its pixels to the output
-    let img = match image::open(&config.image_path) {
-        Ok(img) => img,
-        Err(e) => return Err(format!("Error opening image file \"{}\": {}",
-            &config.image_path, e.to_string())),
-    };
-    let img = img.to_bgra();
 
     // Add the image data array definition to the output
     output.push_str(format!("const uint{}_t image_data[{}] PROGMEM = {{\n",
