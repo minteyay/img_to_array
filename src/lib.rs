@@ -8,26 +8,37 @@ pub struct Config {
     pub image_path: String,
     pub palette_path: String,
     pub output_path: String,
+    pub colour_format: ColourFormat,
+    pub palette_size: u8,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug)]
+pub enum ColourFormat { RGB565, RGB }
+
+#[derive(Debug)]
 struct Rgb565(u16);
 
-impl From<(u8, u8, u8)> for Rgb565 {
-    fn from(rgb: (u8, u8, u8)) -> Self {
+impl From<&Rgb> for Rgb565 {
+    fn from(rgb: &Rgb) -> Self {
         // First we shift to the right to truncate the values to the widths
         // we want (5 most significant bits from red, 6 from green, 5 from blue)
         // then shift them back to the left to their places in 565
-        let r: u16 = u16::from(rgb.0) >> 3 << 11;
-        let g: u16 = u16::from(rgb.1) >> 2 << 5;
-        let b: u16 = u16::from(rgb.2) >> 3;
+        let r: u16 = (((rgb.0 & 0xFF0000) >> 16) as u16) >> 3 << 11;
+        let g: u16 = (((rgb.0 & 0x00FF00) >> 8) as u16) >> 2 << 5;
+        let b: u16 = (((rgb.0 & 0x0000FF)) as u16) >> 3;
         Rgb565(r | g | b)
     }
 }
 
-impl From<&image::Bgra<u8>> for Rgb565 {
+#[derive(Debug, PartialEq)]
+struct Rgb(u32);
+
+impl From<&image::Bgra<u8>> for Rgb {
     fn from(bgra: &image::Bgra<u8>) -> Self {
-        Rgb565(Rgb565::from((bgra[2], bgra[1], bgra[0])).0)
+        let r: u32 = u32::from(bgra[2]) << 16;
+        let g: u32 = u32::from(bgra[1]) << 8;
+        let b: u32 = u32::from(bgra[0]);
+        Rgb(r | g | b)
     }
 }
 
@@ -42,6 +53,10 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
 
     // Setup getopts options and flags
     let mut opts = Options::new();
+    opts.optopt("c", "colour", "set colour format ([RGB]565, RGB[888])",
+        "FORMAT");
+    opts.optopt("", "palsize", "set palette size in bits (8, 16, 32)",
+        "SIZE");
     opts.optopt("o", "output", "set output file name (output.c by default)",
         "NAME");
     opts.optflag("h", "help", "print this help message");
@@ -62,21 +77,56 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
 
     // Check that the correct number of inputs were given
     if matches.free.len() != 2 {
-        println!("No palette and image files specified");
+        eprintln!("No palette and image files specified");
         print_usage(&program, opts);
         return Err(())
     }
 
-    // Set the output path to one specified or a default one
+    // Set the output path to one specified or the default one
     let output_path = match matches.opt_str("o") {
         Some(v) => v,
         None => String::from("output.c"),
     };
 
+    // Set the colour format to one specified or the default one
+    let colour_format = match matches.opt_str("c") {
+        Some(v) => match v.as_str() {
+            "RGB565" | "565" => ColourFormat::RGB565,
+            "RGB" | "RGB888" | "888" => ColourFormat::RGB,
+            _ => {
+                eprintln!("Unknown colour format {}", v);
+                print_usage(&program, opts);
+                return Err(())
+            }
+        },
+        None => ColourFormat::RGB565,
+    };
+
+    // Set the palette size to one specified or the default one
+    let palette_size = match matches.opt_str("palsize") {
+        Some(v) => match v.as_str() {
+            "8" => 8,
+            "16" => 16,
+            "32" => 32,
+            _ => {
+                eprintln!("Unknown palette size {}", v);
+                print_usage(&program, opts);
+                return Err(())
+            }
+        },
+        None => 8,
+    };
+
     let palette_path = matches.free[0].clone();
     let image_path = matches.free[1].clone();
 
-    Ok(Config { palette_path, image_path, output_path })
+    Ok(Config {
+        palette_path,
+        image_path,
+        output_path,
+        colour_format,
+        palette_size,
+    })
 }
 
 pub fn convert(config: &Config) -> Result<(), String> {
@@ -90,30 +140,40 @@ pub fn convert(config: &Config) -> Result<(), String> {
     };
     let palette_img = palette_img.to_bgra();
 
-    let mut palette: Vec<Rgb565> = Vec::new();
+    let mut palette: Vec<Rgb> = Vec::new();
 
     // Add the colours from the palette to the vector
     for pixel in palette_img.enumerate_pixels() {
-        let colour = Rgb565::from(pixel.2);
-        palette.push(colour);
+        palette.push(Rgb::from(pixel.2));
     }
 
     // Add the palette to the output
-    output.push_str(format!("\nconst uint16_t palette[{}] PROGMEM = {{\n    ",
+    output.push_str("\nconst ");
+    match config.colour_format {
+        ColourFormat::RGB565 => output.push_str("uint16_t"),
+        _ => output.push_str("uint32_t"),
+    }
+    output.push_str(format!(" palette[{}] PROGMEM = {{\n    ",
         palette.len()).as_str());
     let mut line = String::from("    ");
+    let mut to_add: String;
     for colour in &palette {
+        match config.colour_format {
+            ColourFormat::RGB565 => to_add = format!("{:#06X}, ",
+                Rgb565::from(colour).0),
+            ColourFormat::RGB => to_add = format!("{:#08X}, ", colour.0),
+        }
         // Check if we need to push the current value to the next line
-        if line.len() + 7 > 80 {
+        if line.len() + to_add.len() > 80 {
             output.push_str(format!("{}\n", line).as_str());
             line = String::from("    ");
         }
-        line.push_str(format!("{:#06X}, ", colour.0).as_str());
+        line.push_str(to_add.as_str());
     }
     if !line.trim().is_empty() {
         output.push_str(line.as_str());
     }
-    output.push_str("\n};\n\n");
+    output.push_str("\n};\n");
 
     // Read in the image to convert and add its pixels to the output
     let img = match image::open(&config.image_path) {
@@ -124,26 +184,33 @@ pub fn convert(config: &Config) -> Result<(), String> {
     let img = img.to_bgra();
 
     // Add the image data array definition to the output
-    output.push_str(format!("const uint8_t image_data[{}] PROGMEM = {{\n",
-        img.dimensions().0 * img.dimensions().1).as_str());
-    let mut line = String::from("    ");
+    output.push_str(format!("const uint{}_t image_data[{}] PROGMEM = {{\n",
+        config.palette_size, img.dimensions().0 * img.dimensions().1).as_str());
+    line = String::from("    ");
     for pixel in img.enumerate_pixels() {
-        // Convert the 32 bit RGBA pixel value to RGB565
-        let colour = Rgb565::from(pixel.2);
-
-        // Check if we need to push the current value to the next line
-        if line.len() + 4 > 80 {
-            output.push_str(format!("{}\n", line).as_str());
-            line = String::from("    ");
-        }
+        let colour = Rgb::from(pixel.2);
 
         // Check that the colour is defined in the palette
         let palette_index = match palette.iter().position( |c| c == &colour) {
             Some(v) => v,
-            None => return Err(format!("Error creating colour index array: \
-                colour {:#06X} isn't present in the palette", colour.0)),
+            None => match config.colour_format {
+                ColourFormat::RGB565 => return Err(format!("Error creating \
+                    colour index array: colour {:#06X} ({:#08X}) isn't present \
+                    in the palette", Rgb565::from(&colour).0, colour.0)),
+                ColourFormat::RGB => return Err(format!("Error \
+                    creating colour index array: colour {:#08X} isn't \
+                    present in the palette", colour.0)),
+            },
         };
-        line.push_str(format!("{:3},", palette_index).as_str());
+
+        to_add = format!("{},", palette_index);
+        // Check if we need to push the current value to the next line
+        if line.len() + to_add.len() > 80 {
+            output.push_str(format!("{}\n", line).as_str());
+            line = String::from("    ");
+        }
+
+        line.push_str(to_add.as_str());
     }
     if !line.trim().is_empty() {
         output.push_str(format!("{}\n", line).as_str());
