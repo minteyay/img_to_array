@@ -55,12 +55,10 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
     // Setup getopts options and flags
     let mut opts = Options::new();
     opts.optopt("c", "colour", "set colour format ([RGB]565, RGB[888]) (565 by \
-        default)",
-        "FORMAT");
+        default)", "FORMAT");
     opts.optopt("p", "palette", "set palette file", "FILE");
     opts.optopt("", "palsize", "set palette size in bits (8, 16, 32) (8 by \
-        default)",
-        "SIZE");
+        default)", "SIZE");
     opts.optopt("o", "output", "set output file name (output.c by default)",
         "FILE");
     opts.optflag("h", "help", "print this help message");
@@ -143,10 +141,10 @@ pub fn convert(config: &Config) -> Result<(), String> {
             &config.image_path, e.to_string())),
     };
 
-    // Construct the palette
+    // Construct the palette for the conversion
     let palette = construct_palette(&config, &img)?;
 
-    // Add the palette to the output
+    // Add the palette to the output string
     write_palette(&mut output, &config, &palette);
 
     // If we have a separate palette file, check that the image doesn't have
@@ -155,10 +153,10 @@ pub fn convert(config: &Config) -> Result<(), String> {
         check_against_palette(&img, &palette)?;
     }
 
-    // Add the image data array definition to the output
+    // Add the image data array to the output
     write_image_data(&mut output, &config, &img, &palette);
 
-    // Write output to file
+    // Write output string to file
     if let Err(e) = fs::write(&config.output_path, output) {
         return Err(format!("Error writing output file: {}", e.to_string()))
     }
@@ -166,7 +164,9 @@ pub fn convert(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-fn list_colours(palette_img: &image::DynamicImage) -> (Vec<Rgb>, HashSet<Rgb>) {
+// Returns both a vector of all the colours for indexing purposes as well as a
+// hashset for the purpose of checking if some colours exist in the image.
+fn list_colours(palette_img: &image::DynamicImage) -> Vec<Rgb> {
     let mut colours: HashSet<Rgb> = HashSet::new();
     let mut palette: Vec<Rgb> = Vec::new();
     let palette_img = palette_img.to_bgra();
@@ -177,7 +177,7 @@ fn list_colours(palette_img: &image::DynamicImage) -> (Vec<Rgb>, HashSet<Rgb>) {
             palette.push(colour);
         }
     }
-    (palette, colours)
+    palette
 }
 
 fn construct_palette(config: &Config, img: &image::DynamicImage)
@@ -189,10 +189,10 @@ fn construct_palette(config: &Config, img: &image::DynamicImage)
                 Err(e) => return Err(format!("Error opening palette file \
                     \"{}\": {}", &path, e.to_string())),
             };
-            Ok(list_colours(&palette_img).0)
+            Ok(list_colours(&palette_img))
         },
         None => {
-            let palette = list_colours(&img).0;
+            let palette = list_colours(&img);
             if palette.len() > match config.palette_size {
                 8 => 256,
                 16 => 65536,
@@ -240,7 +240,7 @@ fn write_palette(output: &mut String, config: &Config, palette: &Vec<Rgb>) {
 
 fn check_against_palette(img: &image::DynamicImage, palette: &Vec<Rgb>)
     -> Result<(), String> {
-    let img_colours = list_colours(&img).1;
+    let img_colours = list_colours(&img);
     for colour in img_colours.iter() {
         if palette.iter().position( |c| c == colour ).is_none() {
             return Err(format!("Colour {:#08X} isn't present in the palette",
@@ -252,7 +252,8 @@ fn check_against_palette(img: &image::DynamicImage, palette: &Vec<Rgb>)
 
 fn write_image_data(output: &mut String, config: &Config,
     img: &image::DynamicImage, palette: &Vec<Rgb>) {
-    // Create a hashmap for the palette so we don't need to search the vector
+    // Create a hashmap for the palette so we don't need to search the palette
+    // vector on every pixel of the image
     let mut palette_map: HashMap<Rgb, usize> = HashMap::new();
     for index in 0..palette.len() {
         palette_map.insert(palette[index], index);
