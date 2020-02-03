@@ -8,6 +8,7 @@ use getopts::Options;
 pub struct Config {
     pub image_path: String,
     pub palette_path: Option<String>,
+    pub no_palette: bool,
     pub output_path: String,
     pub colour_format: ColourFormat,
     pub palette_size: u8,
@@ -59,6 +60,8 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
     opts.optopt("p", "palette", "set palette file", "FILE");
     opts.optopt("", "palsize", "set palette size in bits (8, 16, 32) (8 by \
         default)", "SIZE");
+    opts.optflag("", "nopalette", "don't use a palette, just write colour \
+        values directly");
     opts.optopt("o", "output", "set output file name (output.c by default)",
         "FILE");
     opts.optflag("h", "help", "print this help message");
@@ -120,11 +123,13 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
     };
 
     let palette_path = matches.opt_str("p");
+    let no_palette = matches.opt_present("nopalette");
     let image_path = matches.free[0].clone();
 
     Ok(Config {
-        palette_path,
         image_path,
+        palette_path,
+        no_palette,
         output_path,
         colour_format,
         palette_size,
@@ -141,20 +146,29 @@ pub fn convert(config: &Config) -> Result<(), String> {
             &config.image_path, e.to_string())),
     };
 
-    // Construct the palette for the conversion
-    let palette = construct_palette(&config, &img)?;
+    match config.no_palette {
+        true => {
+            // Add the image data array (colours instead of indices) to the
+            // output string
+            write_raw_image_data(&mut output, &config, &img);
+        }
+        false => {
+            // Construct the palette for the conversion
+            let palette = construct_palette(&config, &img)?;
 
-    // Add the palette to the output string
-    write_palette(&mut output, &config, &palette);
+            // Add the palette to the output string
+            write_palette(&mut output, &config, &palette);
 
-    // If we have a separate palette file, check that the image doesn't have
-    // any colours not found in the palette
-    if config.palette_path.is_some() {
-        check_against_palette(&img, &palette)?;
+            // If we have a separate palette file, check that the image doesn't
+            // have any colours not found in the palette
+            if config.palette_path.is_some() {
+                check_against_palette(&img, &palette)?;
+            }
+
+            // Add the image data array to the output
+            write_image_data(&mut output, &config, &img, &palette);
+        }
     }
-
-    // Add the image data array to the output
-    write_image_data(&mut output, &config, &img, &palette);
 
     // Write output string to file
     if let Err(e) = fs::write(&config.output_path, output) {
@@ -268,6 +282,39 @@ fn write_image_data(output: &mut String, config: &Config,
         let palette_index = palette_map.get(&Rgb::from(pixel.2)).unwrap();
 
         to_add = format!("{},", palette_index);
+        // Check if we need to push the current value to the next line
+        if line.len() + to_add.len() > 80 {
+            output.push_str(format!("{}\n", line).as_str());
+            line = String::from("    ");
+        }
+
+        line.push_str(to_add.as_str());
+    }
+    if !line.trim().is_empty() {
+        output.push_str(format!("{}\n", line).as_str());
+    }
+    output.push_str("};\n");
+}
+
+fn write_raw_image_data(output: &mut String, config: &Config,
+    img: &image::DynamicImage) {
+    let img = img.to_bgra();
+    output.push_str("\nconst uint");
+    match config.colour_format {
+        ColourFormat::RGB565 => output.push_str("16"),
+        ColourFormat::RGB => output.push_str("32"),
+    }
+    output.push_str(format!("_t image_data[{}] PROGMEM = {{\n",
+        img.dimensions().0 * img.dimensions().1).as_str());
+    let mut line = String::from("    ");
+    let mut to_add: String;
+    for pixel in img.enumerate_pixels() {
+        let colour = Rgb::from(pixel.2);
+        match config.colour_format {
+            ColourFormat::RGB565 => to_add = format!("{:#06X},",
+                Rgb565::from(&colour).0),
+            ColourFormat::RGB => to_add = format!("{:#08X},", colour.0),
+        }
         // Check if we need to push the current value to the next line
         if line.len() + to_add.len() > 80 {
             output.push_str(format!("{}\n", line).as_str());
