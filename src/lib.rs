@@ -1,4 +1,7 @@
+extern crate getopts;
+
 use std::fs;
+use getopts::Options;
 
 #[derive(Debug)]
 pub struct Config {
@@ -26,6 +29,54 @@ impl From<&image::Bgra<u8>> for Rgb565 {
     fn from(bgra: &image::Bgra<u8>) -> Self {
         Rgb565(Rgb565::from((bgra[2], bgra[1], bgra[0])).0)
     }
+}
+
+fn print_usage(program: &str, opts: Options) {
+    let brief = format!("Usage: {} PALETTE_PATH IMAGE_PATH [options]", program);
+    print!("{}", opts.usage(&brief));
+}
+
+pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
+    // Get program name
+    let program = args[0].clone();
+
+    // Setup getopts options and flags
+    let mut opts = Options::new();
+    opts.optopt("o", "output", "set output file name (output.c by default)",
+        "NAME");
+    opts.optflag("h", "help", "print this help message");
+    let matches = match opts.parse(&args[1..]) {
+        Ok(m) => m,
+        Err(err) => {
+            eprintln!("{}", err.to_string());
+            print_usage(&program, opts);
+            return Err(())
+        }
+    };
+
+    // Check if the help menu was requested
+    if matches.opt_present("h") {
+        print_usage(&program, opts);
+        return Err(())
+    }
+
+    // Check that the correct number of inputs were given
+    if matches.free.len() != 2 {
+        println!("No palette and image files specified");
+        print_usage(&program, opts);
+        return Err(())
+    }
+
+    // Set the output path to one specified or a default one
+    let output_path = match matches.opt_str("o") {
+        Some(v) => v,
+        None => String::from("output.c"),
+    };
+
+    let palette_path = matches.free[0].clone();
+    let image_path = matches.free[1].clone();
+
+    Ok(Config { palette_path, image_path, output_path })
 }
 
 pub fn convert(config: &Config) -> Result<(), String> {
