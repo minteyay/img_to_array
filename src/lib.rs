@@ -53,10 +53,12 @@ pub fn parse_config(args: Vec<String>) -> Result<Config, ()> {
 
     // Setup getopts options and flags
     let mut opts = Options::new();
-    opts.optopt("c", "colour", "set colour format ([RGB]565, RGB[888])",
+    opts.optopt("c", "colour", "set colour format ([RGB]565, RGB[888]) (565 by \
+        default)",
         "FORMAT");
     opts.optopt("p", "palette", "set palette file", "FILE");
-    opts.optopt("", "palsize", "set palette size in bits (8, 16, 32)",
+    opts.optopt("", "palsize", "set palette size in bits (8, 16, 32) (8 by \
+        default)",
         "SIZE");
     opts.optopt("o", "output", "set output file name (output.c by default)",
         "FILE");
@@ -213,7 +215,7 @@ pub fn convert(config: &Config) -> Result<(), String> {
     output.push_str("\n};\n");
 
     // Add the image data array definition to the output
-    output.push_str(format!("const uint{}_t image_data[{}] PROGMEM = {{\n",
+    output.push_str(format!("\nconst uint{}_t image_data[{}] PROGMEM = {{\n",
         config.palette_size, img.dimensions().0 * img.dimensions().1).as_str());
     line = String::from("    ");
     for pixel in img.enumerate_pixels() {
