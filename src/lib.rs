@@ -1,6 +1,7 @@
 extern crate getopts;
 
 use std::fs;
+use std::collections::{ HashSet, HashMap };
 use getopts::Options;
 
 #[derive(Debug)]
@@ -30,7 +31,7 @@ impl From<&Rgb> for Rgb565 {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
 struct Rgb(u32);
 
 impl From<&image::Bgra<u8>> for Rgb {
@@ -141,62 +142,84 @@ pub fn convert(config: &Config) -> Result<(), String> {
         Err(e) => return Err(format!("Error opening image file \"{}\": {}",
             &config.image_path, e.to_string())),
     };
-    let img = img.to_bgra();
 
     // Construct the palette
+    let palette = construct_palette(&config, &img)?;
+
+    // Add the palette to the output
+    write_palette(&mut output, &config, &palette);
+
+    // If we have a separate palette file, check that the image doesn't have
+    // any colours not found in the palette
+    if config.palette_path.is_some() {
+        check_against_palette(&img, &palette)?;
+    }
+
+    // Add the image data array definition to the output
+    write_image_data(&mut output, &config, &img, &palette);
+
+    // Write output to file
+    if let Err(e) = fs::write(&config.output_path, output) {
+        return Err(format!("Error writing output file: {}", e.to_string()))
+    }
+
+    Ok(())
+}
+
+fn list_colours(palette_img: &image::DynamicImage) -> (Vec<Rgb>, HashSet<Rgb>) {
+    let mut colours: HashSet<Rgb> = HashSet::new();
     let mut palette: Vec<Rgb> = Vec::new();
+    let palette_img = palette_img.to_bgra();
+
+    for pixel in palette_img.enumerate_pixels() {
+        let colour = Rgb::from(pixel.2);
+        if colours.insert(colour) {
+            palette.push(colour);
+        }
+    }
+    (palette, colours)
+}
+
+fn construct_palette(config: &Config, img: &image::DynamicImage)
+    -> Result<Vec<Rgb>, String> {
     match &config.palette_path {
         Some(path) => {
-            // Read in and store the palette if one was given
             let palette_img = match image::open(&path) {
                 Ok(img) => img,
                 Err(e) => return Err(format!("Error opening palette file \
                     \"{}\": {}", &path, e.to_string())),
             };
-            let palette_img = palette_img.to_bgra();
-
-            // Add the colours from the palette to the vector
-            for pixel in palette_img.enumerate_pixels() {
-                palette.push(Rgb::from(pixel.2));
-            }
+            Ok(list_colours(&palette_img).0)
         },
         None => {
-            // Make a palette from the image if one wasn't given
-            for pixel in img.enumerate_pixels() {
-                let colour = Rgb::from(pixel.2);
-
-                // Add the pixel's colour to the palette if it's not there yet
-                match palette.iter().position( |c| c == &colour ) {
-                    Some(_) => (),
-                    None => {
-                        if palette.len() > match config.palette_size {
-                            8 => 256,
-                            16 => 65536,
-                            32 => 4294967296,
-                            _ => 0,
-                        } {
-                            return Err(format!("Image file has too many \
-                                colours for palette size of {}",
-                                config.palette_size))
-                        }
-                        palette.push(colour);
-                    }
-                }
+            let palette = list_colours(&img).0;
+            if palette.len() > match config.palette_size {
+                8 => 256,
+                16 => 65536,
+                32 => 4294967296,
+                _ => 0,
+            } {
+                return Err(format!("Image file has too many \
+                    colours for palette size of {}",
+                    config.palette_size))
             }
+            Ok(palette)
         },
     }
+}
 
-    // Add the palette to the output
+fn write_palette(output: &mut String, config: &Config, palette: &Vec<Rgb>) {
     output.push_str("\nconst ");
     match config.colour_format {
         ColourFormat::RGB565 => output.push_str("uint16_t"),
         _ => output.push_str("uint32_t"),
     }
-    output.push_str(format!(" palette[{}] PROGMEM = {{\n    ",
+    output.push_str(format!(" palette[{}] PROGMEM = {{\n",
         palette.len()).as_str());
+
     let mut line = String::from("    ");
     let mut to_add: String;
-    for colour in &palette {
+    for colour in palette {
         match config.colour_format {
             ColourFormat::RGB565 => to_add = format!("{:#06X}, ",
                 Rgb565::from(colour).0),
@@ -213,26 +236,35 @@ pub fn convert(config: &Config) -> Result<(), String> {
         output.push_str(line.as_str());
     }
     output.push_str("\n};\n");
+}
 
-    // Add the image data array definition to the output
+fn check_against_palette(img: &image::DynamicImage, palette: &Vec<Rgb>)
+    -> Result<(), String> {
+    let img_colours = list_colours(&img).1;
+    for colour in img_colours.iter() {
+        if palette.iter().position( |c| c == colour ).is_none() {
+            return Err(format!("Colour {:#08X} isn't present in the palette",
+                colour.0))
+        }
+    }
+    Ok(())
+}
+
+fn write_image_data(output: &mut String, config: &Config,
+    img: &image::DynamicImage, palette: &Vec<Rgb>) {
+    // Create a hashmap for the palette so we don't need to search the vector
+    let mut palette_map: HashMap<Rgb, usize> = HashMap::new();
+    for index in 0..palette.len() {
+        palette_map.insert(palette[index], index);
+    }
+
+    let img = img.to_bgra();
     output.push_str(format!("\nconst uint{}_t image_data[{}] PROGMEM = {{\n",
         config.palette_size, img.dimensions().0 * img.dimensions().1).as_str());
-    line = String::from("    ");
+    let mut line = String::from("    ");
+    let mut to_add: String;
     for pixel in img.enumerate_pixels() {
-        let colour = Rgb::from(pixel.2);
-
-        // Check that the colour is defined in the palette
-        let palette_index = match palette.iter().position( |c| c == &colour) {
-            Some(v) => v,
-            None => match config.colour_format {
-                ColourFormat::RGB565 => return Err(format!("Error creating \
-                    colour index array: colour {:#06X} ({:#08X}) isn't present \
-                    in the palette", Rgb565::from(&colour).0, colour.0)),
-                ColourFormat::RGB => return Err(format!("Error \
-                    creating colour index array: colour {:#08X} isn't \
-                    present in the palette", colour.0)),
-            },
-        };
+        let palette_index = palette_map.get(&Rgb::from(pixel.2)).unwrap();
 
         to_add = format!("{},", palette_index);
         // Check if we need to push the current value to the next line
@@ -247,11 +279,4 @@ pub fn convert(config: &Config) -> Result<(), String> {
         output.push_str(format!("{}\n", line).as_str());
     }
     output.push_str("};\n");
-
-    // Write output to file
-    if let Err(e) = fs::write(&config.output_path, output) {
-        return Err(format!("Error writing output file: {}", e.to_string()))
-    }
-
-    Ok(())
 }
